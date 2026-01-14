@@ -1,101 +1,135 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
-import type { LiveSession } from "@google/genai";
 import { decode, decodeAudioData, createBlob } from './utils/audio';
 
 enum AgentStatus {
-  Idle = "Idle",
-  Listening = "Listening...",
-  Thinking = "Thinking...",
-  Speaking = "Speaking...",
+  Idle = "Start",
+  Listening = "Listening",
+  Thinking = "Processing",
+  Speaking = "Speaking",
   Error = "Error",
 }
 
-// --- UI Icons ---
-const MicrophoneIcon = ({ className }: { className?: string }) => (
-    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM11 5a1 1 0 0 1 2 0v6a1 1 0 0 1-2 0V5Z"></path>
-        <path d="M12 15a5.006 5.006 0 0 0 5-5H15a3 3 0 0 1-3 3a3 3 0 0 1-3-3H7a5.006 5.006 0 0 0 5 5Z"></path>
-        <path d="M19 11h-1.126a1 1 0 0 0 0 2H19a1 1 0 0 0 0-2Z M4 12a1 1 0 0 0 1 1h1.126a1 1 0 1 0 0-2H5a1 1 0 0 0-1 1Z"></path>
-        <path d="M12 18a1 1 0 0 0 1-1v-1.133A6.983 6.983 0 0 0 19 9h1a1 1 0 0 0 0-2h-1a7.006 7.006 0 0 0-7-7a7.006 7.006 0 0 0-7 7H4a1 1 0 0 0 0 2h1a6.983 6.983 0 0 0 6 6.867V17a1 1 0 0 0 1 1Z"></path>
-    </svg>
-);
-
-const StopIcon = ({ className }: { className?: string }) => (
-    <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zM9 9h6v6H9V9z"></path>
-    </svg>
-);
-
-// --- Audio Waveform Component ---
-const AudioWaveform = ({ analyserNode, isActive }: { analyserNode: AnalyserNode | null, isActive: boolean }) => {
+// --- Visualizer Component ---
+// A circular, organic visualizer that reacts to frequency data
+const SonicOrb = ({ analyserNode, status }: { analyserNode: AnalyserNode | null, status: AgentStatus }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const animationFrameIdRef = useRef<number | null>(null);
 
     useEffect(() => {
-        if (isActive && analyserNode && canvasRef.current) {
-            const canvas = canvasRef.current;
-            const canvasCtx = canvas.getContext('2d');
-            const bufferLength = analyserNode.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
 
-            const draw = () => {
-                if (!canvasCtx) return;
+        // Handle high DPI displays
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.scale(dpr, dpr);
 
-                animationFrameIdRef.current = requestAnimationFrame(draw);
+        let time = 0;
+        const baseRadius = rect.width / 4; 
+        const bufferLength = analyserNode ? analyserNode.frequencyBinCount : 0;
+        const dataArray = new Uint8Array(bufferLength);
+
+        const draw = () => {
+            animationFrameIdRef.current = requestAnimationFrame(draw);
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, rect.width, rect.height);
+
+            // Get audio data if available
+            if (analyserNode && (status === AgentStatus.Speaking || status === AgentStatus.Listening)) {
                 analyserNode.getByteFrequencyData(dataArray);
+            }
 
-                canvasCtx.fillStyle = 'rgb(17 24 39)'; // bg-gray-900
-                canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
 
-                const barWidth = (canvas.width / bufferLength) * 2.5;
-                let barHeight;
-                let x = 0;
+            ctx.beginPath();
+            
+            // Create organic circle shape
+            for (let i = 0; i <= 100; i++) {
+                const angle = (i / 100) * Math.PI * 2;
+                
+                // Base pulsing effect
+                let offset = 0;
 
-                for (let i = 0; i < bufferLength; i++) {
-                    barHeight = dataArray[i];
-                    
-                    const blue = barHeight + (25 * (i/bufferLength));
-                    const green = 250 * (i/bufferLength);
-                    const red = 50;
-                    
-                    canvasCtx.fillStyle = `rgb(${red}, ${green}, ${blue})`;
-                    canvasCtx.fillRect(x, canvas.height - barHeight / 2, barWidth, barHeight / 2);
-
-                    x += barWidth + 1;
+                if (status === AgentStatus.Listening) {
+                    // Slow breath
+                    offset = Math.sin(time * 0.05) * 5; 
+                } else if (status === AgentStatus.Speaking) {
+                    // Reactive to audio
+                    // Map angle to frequency index roughly
+                    const dataIndex = Math.floor((i / 100) * (bufferLength / 2));
+                    const value = dataArray[dataIndex] || 0;
+                    offset = (value / 255) * 60;
+                } else if (status === AgentStatus.Thinking) {
+                     // Fast nervous pulse
+                     offset = Math.sin(time * 0.2) * 10;
                 }
-            };
 
-            draw();
+                // Add some Perlin-like noise (simulated with sin waves)
+                const noise = Math.sin(angle * 5 + time * 0.1) * 5 + Math.cos(angle * 3 - time * 0.1) * 5;
+                
+                const r = baseRadius + offset + noise;
+                const x = centerX + Math.cos(angle) * r;
+                const y = centerY + Math.sin(angle) * r;
 
-        } else {
-            if (animationFrameIdRef.current) {
-                cancelAnimationFrame(animationFrameIdRef.current);
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
             }
-            const canvas = canvasRef.current;
-            const canvasCtx = canvas?.getContext('2d');
-            if (canvas && canvasCtx) {
-                canvasCtx.fillStyle = 'rgb(17 24 39)'; // bg-gray-900
-                canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.closePath();
+
+            // Gradient Fill
+            const gradient = ctx.createRadialGradient(centerX, centerY, baseRadius * 0.2, centerX, centerY, baseRadius * 2);
+            if (status === AgentStatus.Error) {
+                gradient.addColorStop(0, 'rgba(239, 68, 68, 0.8)');
+                gradient.addColorStop(1, 'rgba(239, 68, 68, 0)');
+            } else if (status === AgentStatus.Speaking) {
+                gradient.addColorStop(0, 'rgba(124, 58, 237, 0.8)'); // Violet
+                gradient.addColorStop(0.5, 'rgba(245, 158, 11, 0.3)'); // Amber hint
+                gradient.addColorStop(1, 'rgba(124, 58, 237, 0)');
+            } else {
+                gradient.addColorStop(0, 'rgba(255, 255, 255, 0.8)');
+                gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
             }
-        }
+
+            ctx.fillStyle = gradient;
+            ctx.fill();
+
+            // Stroke
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            time += 1;
+        };
+
+        draw();
 
         return () => {
             if (animationFrameIdRef.current) {
                 cancelAnimationFrame(animationFrameIdRef.current);
             }
         };
-    }, [isActive, analyserNode]);
+    }, [analyserNode, status]);
 
     return <canvas ref={canvasRef} className="w-full h-full" />;
 };
-
 
 export default function App() {
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>(AgentStatus.Idle);
 
-  const sessionRef = useRef<LiveSession | null>(null);
+  // sessionRef typed as any because LiveSession is not exported from @google/genai
+  const sessionRef = useRef<any>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
@@ -105,12 +139,13 @@ export default function App() {
   const analyserNodeRef = useRef<AnalyserNode | null>(null);
   const nextStartTimeRef = useRef(0);
 
-  const systemInstruction = `You are an expert bilingual AI assistant, fluent in both English and Urdu. Your primary directive is to respond to the user in the language they primarily use.
-1. If the user speaks in English, you must respond in English.
-2. If the user speaks in Urdu, you must respond in Urdu using the standard Perso-Arabic script. Do not use the Roman alphabet for your Urdu responses.
-3. If the user mixes English and Urdu, your response must be in Urdu, also using the Perso-Arabic script.
-Always maintain a helpful and friendly conversational tone.`;
-
+  // System instruction tailored for bilingual switching
+  const systemInstruction = `You are a sophisticated bilingual voice AI. 
+  Your core function is to fluently switch between Urdu and English based on the user's language.
+  - If I speak English, reply in concise, witty English.
+  - If I speak Urdu, reply in natural, conversational Urdu.
+  - If I mix languages (Roman Urdu/English), reply in Urdu.
+  - Keep responses short, human-like, and engaging. Avoid robotic pleasantries.`;
 
   const stopConversation = useCallback(() => {
     if (sessionRef.current) {
@@ -156,17 +191,19 @@ Always maintain a helpful and friendly conversational tone.`;
       micStreamRef.current = stream;
 
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      // Using a single AudioContext for input and output logic if possible, but keeping separate for simplicity as per existing
       outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       nextStartTimeRef.current = 0;
       
       const analyser = outputAudioContextRef.current.createAnalyser();
-      analyser.fftSize = 256;
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.5; // Smoother animations
       analyser.connect(outputAudioContextRef.current.destination);
       analyserNodeRef.current = analyser;
 
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
       const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         config: {
           responseModalities: [Modality.AUDIO],
           inputAudioTranscription: {},
@@ -192,11 +229,8 @@ Always maintain a helpful and friendly conversational tone.`;
           },
           onmessage: async (message: LiveServerMessage) => {
             if (message.serverContent?.inputTranscription) {
-                if (message.serverContent.inputTranscription.isFinal) {
-                    setAgentStatus(AgentStatus.Thinking);
-                } else {
-                    setAgentStatus(AgentStatus.Listening);
-                }
+                // Assuming user is speaking if input transcription is received
+                setAgentStatus(AgentStatus.Listening);
             }
 
             if(message.serverContent?.turnComplete) {
@@ -248,52 +282,78 @@ Always maintain a helpful and friendly conversational tone.`;
     }
   };
 
-  const getStatusColor = () => {
-    switch(agentStatus) {
-        case AgentStatus.Listening: return 'text-green-400';
-        case AgentStatus.Thinking: return 'text-yellow-400';
-        case AgentStatus.Speaking: return 'text-blue-400';
-        case AgentStatus.Error: return 'text-red-500';
-        default: return 'text-gray-400';
-    }
-  }
-
   return (
-    <div className="bg-gray-900 text-white min-h-screen flex flex-col font-sans">
-      <header className="p-4 border-b border-gray-700">
-        <h1 className="text-2xl font-bold text-center">Bilingual Voice AI Agent</h1>
-        <p className="text-center text-gray-400 text-sm mt-1">Converses in English & Urdu</p>
+    <div className="relative w-full h-screen flex flex-col items-center justify-between p-6 overflow-hidden bg-[#030305] text-gray-100">
+      
+      {/* Background Ambience */}
+      <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] bg-violet-900/20 rounded-full blur-[128px] pointer-events-none" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[400px] h-[400px] bg-amber-900/20 rounded-full blur-[100px] pointer-events-none" />
+
+      {/* Header */}
+      <header className="relative z-10 w-full flex justify-between items-center opacity-80">
+        <div className="flex flex-col">
+            <span className="text-[10px] uppercase tracking-widest text-gray-500">Bilingual Interface v2.0</span>
+        </div>
+        <div className="glass-panel px-3 py-1 rounded-full flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${isSessionActive ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
+            <span className="text-xs font-mono uppercase text-gray-400">{isSessionActive ? 'Online' : 'Offline'}</span>
+        </div>
       </header>
 
-      <main className="flex-grow p-4 md:p-6 flex flex-col overflow-y-auto">
-        {agentStatus !== AgentStatus.Speaking && (
-          <div className="flex-grow flex items-center justify-center">
-            <div className="text-center">
-               <MicrophoneIcon className={`w-48 h-48 transition-colors duration-300 ${isSessionActive ? 'text-gray-600' : 'text-gray-700'}`} />
-               {agentStatus === AgentStatus.Idle && <p className="text-gray-500 mt-4">Click the microphone to start</p>}
+      {/* Main Content */}
+      <main className="relative z-10 flex-grow flex flex-col items-center justify-center w-full max-w-2xl">
+        
+        {/* The Sonic Orb Visualizer */}
+        <div className="relative w-[300px] h-[300px] md:w-[450px] md:h-[450px]">
+            <SonicOrb analyserNode={analyserNodeRef.current} status={agentStatus} />
+            
+            {/* Background Typography Depth Layer */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full text-center pointer-events-none mix-blend-overlay opacity-30">
+                <h1 className="font-display text-[8rem] leading-none font-bold tracking-tighter select-none blur-sm">
+                    {agentStatus === AgentStatus.Speaking ? 'SUNIYE' : 'BOLIYE'}
+                </h1>
             </div>
-          </div>
-        )}
-        <AudioWaveform
-          analyserNode={analyserNodeRef.current}
-          isActive={agentStatus === AgentStatus.Speaking}
-        />
+        </div>
+
+        {/* Text Prompt / Subtitles */}
+        <div className="mt-8 text-center h-12">
+             <p className={`text-lg font-light tracking-wide transition-opacity duration-500 ${agentStatus !== AgentStatus.Idle ? 'opacity-100' : 'opacity-0'}`}>
+                {agentStatus === AgentStatus.Listening && "Listening..."}
+                {agentStatus === AgentStatus.Thinking && "Translating context..."}
+                {agentStatus === AgentStatus.Speaking && "Responding..."}
+                {agentStatus === AgentStatus.Error && <span className="text-red-400">Connection Error</span>}
+            </p>
+             {agentStatus === AgentStatus.Idle && (
+                 <p className="text-gray-500 font-light animate-pulse">Ready to converse in Urdu & English</p>
+             )}
+        </div>
+
       </main>
 
-      <footer className="p-4 border-t border-gray-700 bg-gray-900 sticky bottom-0">
-        <div className="flex flex-col items-center justify-center gap-4">
-          <p className={`text-lg font-medium transition-colors duration-300 ${getStatusColor()}`}>
-            {agentStatus}
-          </p>
-          <button
+      {/* Footer Controls */}
+      <footer className="relative z-10 w-full flex justify-center pb-8">
+        <button
             onClick={handleToggleSession}
-            className={`w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-opacity-50 ${isSessionActive ? 'bg-red-600 hover:bg-red-700 focus:ring-red-400' : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-400'}`}
-            aria-label={isSessionActive ? 'Stop conversation' : 'Start conversation'}
-          >
-            {isSessionActive ? <StopIcon className="w-10 h-10 text-white" /> : <MicrophoneIcon className="w-10 h-10 text-white" />}
-          </button>
-        </div>
+            className={`group relative flex items-center justify-center px-8 py-4 rounded-full glass-panel transition-all duration-500 hover:bg-white/5 active:scale-95 ${isSessionActive ? 'border-red-500/30' : 'border-white/10'}`}
+        >
+            <span className={`absolute inset-0 rounded-full blur-md bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
+            
+            <div className="flex items-center gap-3 relative z-10">
+                {isSessionActive ? (
+                    <>
+                        <span className="w-2 h-2 bg-red-500 rounded-sm animate-spin" />
+                        <span className="font-mono text-sm uppercase tracking-widest text-red-200">Terminate</span>
+                    </>
+                ) : (
+                    <>
+                        <span className="w-2 h-2 bg-white rounded-full group-hover:bg-violet-400 transition-colors" />
+                        <span className="font-mono text-sm uppercase tracking-widest">Initialize</span>
+                    </>
+                )}
+            </div>
+        </button>
       </footer>
+
     </div>
   );
 }
