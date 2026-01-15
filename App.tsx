@@ -11,7 +11,6 @@ enum AgentStatus {
 }
 
 // --- Visualizer Component ---
-// A circular, organic visualizer that reacts to frequency data
 const SonicOrb = ({ analyserNode, status }: { analyserNode: AnalyserNode | null, status: AgentStatus }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const animationFrameIdRef = useRef<number | null>(null);
@@ -22,57 +21,65 @@ const SonicOrb = ({ analyserNode, status }: { analyserNode: AnalyserNode | null,
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        // Handle high DPI displays
-        const dpr = window.devicePixelRatio || 1;
-        const rect = canvas.getBoundingClientRect();
-        canvas.width = rect.width * dpr;
-        canvas.height = rect.height * dpr;
-        ctx.scale(dpr, dpr);
+        // Function to handle resizing dynamically
+        const setCanvasSize = () => {
+            const dpr = window.devicePixelRatio || 1;
+            // We use the parent container's dimensions
+            const parent = canvas.parentElement;
+            if (parent) {
+                const rect = parent.getBoundingClientRect();
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+                ctx.scale(dpr, dpr);
+            }
+        };
+
+        // Initial Set
+        setCanvasSize();
+        window.addEventListener('resize', setCanvasSize);
 
         let time = 0;
-        const baseRadius = rect.width / 4; 
-        const bufferLength = analyserNode ? analyserNode.frequencyBinCount : 0;
-        const dataArray = new Uint8Array(bufferLength);
-
+        
         const draw = () => {
             animationFrameIdRef.current = requestAnimationFrame(draw);
             
-            // Clear canvas
-            ctx.clearRect(0, 0, rect.width, rect.height);
+            // Re-fetch dimensions inside loop or rely on resize listener (listener is more efficient, 
+            // but we need current width for drawing calculations)
+            const width = canvas.width / (window.devicePixelRatio || 1);
+            const height = canvas.height / (window.devicePixelRatio || 1);
+            
+            ctx.clearRect(0, 0, width, height);
 
-            // Get audio data if available
+            const bufferLength = analyserNode ? analyserNode.frequencyBinCount : 0;
+            const dataArray = new Uint8Array(bufferLength);
+
             if (analyserNode && (status === AgentStatus.Speaking || status === AgentStatus.Listening)) {
                 analyserNode.getByteFrequencyData(dataArray);
             }
 
-            const centerX = rect.width / 2;
-            const centerY = rect.height / 2;
+            const centerX = width / 2;
+            const centerY = height / 2;
+            // Radius responsive to current canvas size
+            const baseRadius = Math.min(width, height) / 4; 
 
             ctx.beginPath();
             
-            // Create organic circle shape
             for (let i = 0; i <= 100; i++) {
                 const angle = (i / 100) * Math.PI * 2;
                 
-                // Base pulsing effect
                 let offset = 0;
 
                 if (status === AgentStatus.Listening) {
-                    // Slow breath
-                    offset = Math.sin(time * 0.05) * 5; 
+                    offset = Math.sin(time * 0.05) * (baseRadius * 0.1); 
                 } else if (status === AgentStatus.Speaking) {
-                    // Reactive to audio
-                    // Map angle to frequency index roughly
                     const dataIndex = Math.floor((i / 100) * (bufferLength / 2));
                     const value = dataArray[dataIndex] || 0;
-                    offset = (value / 255) * 60;
+                    offset = (value / 255) * (baseRadius * 0.5);
                 } else if (status === AgentStatus.Thinking) {
-                     // Fast nervous pulse
-                     offset = Math.sin(time * 0.2) * 10;
+                     offset = Math.sin(time * 0.2) * (baseRadius * 0.15);
                 }
 
-                // Add some Perlin-like noise (simulated with sin waves)
-                const noise = Math.sin(angle * 5 + time * 0.1) * 5 + Math.cos(angle * 3 - time * 0.1) * 5;
+                const noise = Math.sin(angle * 5 + time * 0.1) * (baseRadius * 0.05) + Math.cos(angle * 3 - time * 0.1) * (baseRadius * 0.05);
                 
                 const r = baseRadius + offset + noise;
                 const x = centerX + Math.cos(angle) * r;
@@ -87,14 +94,13 @@ const SonicOrb = ({ analyserNode, status }: { analyserNode: AnalyserNode | null,
 
             ctx.closePath();
 
-            // Gradient Fill
             const gradient = ctx.createRadialGradient(centerX, centerY, baseRadius * 0.2, centerX, centerY, baseRadius * 2);
             if (status === AgentStatus.Error) {
                 gradient.addColorStop(0, 'rgba(239, 68, 68, 0.8)');
                 gradient.addColorStop(1, 'rgba(239, 68, 68, 0)');
             } else if (status === AgentStatus.Speaking) {
-                gradient.addColorStop(0, 'rgba(124, 58, 237, 0.8)'); // Violet
-                gradient.addColorStop(0.5, 'rgba(245, 158, 11, 0.3)'); // Amber hint
+                gradient.addColorStop(0, 'rgba(124, 58, 237, 0.8)');
+                gradient.addColorStop(0.5, 'rgba(245, 158, 11, 0.3)');
                 gradient.addColorStop(1, 'rgba(124, 58, 237, 0)');
             } else {
                 gradient.addColorStop(0, 'rgba(255, 255, 255, 0.8)');
@@ -104,7 +110,6 @@ const SonicOrb = ({ analyserNode, status }: { analyserNode: AnalyserNode | null,
             ctx.fillStyle = gradient;
             ctx.fill();
 
-            // Stroke
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
             ctx.lineWidth = 1;
             ctx.stroke();
@@ -115,20 +120,20 @@ const SonicOrb = ({ analyserNode, status }: { analyserNode: AnalyserNode | null,
         draw();
 
         return () => {
+            window.removeEventListener('resize', setCanvasSize);
             if (animationFrameIdRef.current) {
                 cancelAnimationFrame(animationFrameIdRef.current);
             }
         };
     }, [analyserNode, status]);
 
-    return <canvas ref={canvasRef} className="w-full h-full" />;
+    return <canvas ref={canvasRef} className="w-full h-full block" />;
 };
 
 export default function App() {
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>(AgentStatus.Idle);
 
-  // sessionRef typed as any because LiveSession is not exported from @google/genai
   const sessionRef = useRef<any>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -139,7 +144,6 @@ export default function App() {
   const analyserNodeRef = useRef<AnalyserNode | null>(null);
   const nextStartTimeRef = useRef(0);
 
-  // System instruction tailored for bilingual switching
   const systemInstruction = `You are a sophisticated bilingual voice AI. 
   Your core function is to fluently switch between Urdu and English based on the user's language.
   - If I speak English, reply in concise, witty English.
@@ -153,8 +157,8 @@ export default function App() {
       sessionRef.current = null;
     }
     if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach(track => track.stop());
-      micStreamRef.current = null;
+        micStreamRef.current.getTracks().forEach(track => track.stop());
+        micStreamRef.current = null;
     }
     if (scriptProcessorRef.current) {
         scriptProcessorRef.current.disconnect();
@@ -191,13 +195,12 @@ export default function App() {
       micStreamRef.current = stream;
 
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      // Using a single AudioContext for input and output logic if possible, but keeping separate for simplicity as per existing
       outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       nextStartTimeRef.current = 0;
       
       const analyser = outputAudioContextRef.current.createAnalyser();
       analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.5; // Smoother animations
+      analyser.smoothingTimeConstant = 0.5;
       analyser.connect(outputAudioContextRef.current.destination);
       analyserNodeRef.current = analyser;
 
@@ -206,8 +209,6 @@ export default function App() {
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         config: {
           responseModalities: [Modality.AUDIO],
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
           systemInstruction: systemInstruction,
         },
         callbacks: {
@@ -228,12 +229,7 @@ export default function App() {
             scriptProcessor.connect(audioContextRef.current!.destination);
           },
           onmessage: async (message: LiveServerMessage) => {
-            if (message.serverContent?.inputTranscription) {
-                // Assuming user is speaking if input transcription is received
-                setAgentStatus(AgentStatus.Listening);
-            }
-
-            if(message.serverContent?.turnComplete) {
+            if (message.serverContent?.inputTranscription || message.serverContent?.turnComplete) {
                 setAgentStatus(AgentStatus.Listening);
             }
 
@@ -255,11 +251,11 @@ export default function App() {
             }
           },
           onerror: (e: ErrorEvent) => {
-            console.error('Session error:', e);
+            console.error(e);
             setAgentStatus(AgentStatus.Error);
             stopConversation();
           },
-          onclose: (e: CloseEvent) => {
+          onclose: () => {
             stopConversation();
           },
         },
@@ -268,86 +264,89 @@ export default function App() {
       sessionRef.current = await sessionPromise;
 
     } catch (error) {
-      console.error("Failed to start conversation:", error);
+      console.error(error);
       setAgentStatus(AgentStatus.Error);
       setIsSessionActive(false);
     }
   };
 
   const handleToggleSession = () => {
-    if (isSessionActive) {
-      stopConversation();
-    } else {
-      startConversation();
-    }
+    if (isSessionActive) stopConversation();
+    else startConversation();
   };
 
   return (
-    <div className="relative w-full h-screen flex flex-col items-center justify-between p-6 overflow-hidden bg-[#030305] text-gray-100">
+    // 100dvh (Dynamic Viewport Height) ensures full height on mobile browsers including address bars
+    <div className="relative w-full min-h-[100dvh] flex flex-col items-center justify-between p-4 md:p-8 overflow-hidden bg-[#030305] text-gray-100 touch-none">
       
       {/* Background Ambience */}
-      <div className="absolute top-[-20%] left-[-10%] w-[500px] h-[500px] bg-violet-900/20 rounded-full blur-[128px] pointer-events-none" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[400px] h-[400px] bg-amber-900/20 rounded-full blur-[100px] pointer-events-none" />
+      <div className="absolute top-[-20%] left-[-10%] w-[60vw] h-[60vw] bg-violet-900/20 rounded-full blur-[100px] md:blur-[128px] pointer-events-none" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-[50vw] h-[50vw] bg-amber-900/20 rounded-full blur-[80px] md:blur-[100px] pointer-events-none" />
 
       {/* Header */}
-      <header className="relative z-10 w-full flex justify-between items-center opacity-80">
+      <header className="relative z-10 w-full flex justify-between items-center opacity-80 shrink-0">
         <div className="flex flex-col">
-            <span className="text-[10px] uppercase tracking-widest text-gray-500">Bilingual Interface v2.0</span>
+            <span className="text-[10px] md:text-xs uppercase tracking-widest text-gray-500">Bilingual Interface v2.0</span>
         </div>
-        <div className="glass-panel px-3 py-1 rounded-full flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${isSessionActive ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
-            <span className="text-xs font-mono uppercase text-gray-400">{isSessionActive ? 'Online' : 'Offline'}</span>
+        <div className="glass-panel px-3 py-1 rounded-full flex items-center gap-2 border border-white/5 bg-white/5 backdrop-blur-sm">
+            <div className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full ${isSessionActive ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
+            <span className="text-[10px] md:text-xs font-mono uppercase text-gray-400">{isSessionActive ? 'Online' : 'Offline'}</span>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="relative z-10 flex-grow flex flex-col items-center justify-center w-full max-w-2xl">
+      <main className="relative z-10 flex-grow flex flex-col items-center justify-center w-full">
         
-        {/* The Sonic Orb Visualizer */}
-        <div className="relative w-[300px] h-[300px] md:w-[450px] md:h-[450px]">
+        {/* The Sonic Orb Visualizer Container */}
+        {/* 'vmin' sizes it relative to the smaller screen dimension (works for portrait & landscape) */}
+        <div className="relative w-[70vmin] h-[70vmin] max-w-[500px] max-h-[500px] min-w-[250px] min-h-[250px] transition-all duration-300">
             <SonicOrb analyserNode={analyserNodeRef.current} status={agentStatus} />
             
             {/* Background Typography Depth Layer */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full text-center pointer-events-none mix-blend-overlay opacity-30">
-                <h1 className="font-display text-[8rem] leading-none font-bold tracking-tighter select-none blur-sm">
+            {/* Using fluid typography with clamp() */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full text-center pointer-events-none mix-blend-overlay opacity-30 flex items-center justify-center">
+                <h1 
+                    className="font-display font-bold tracking-tighter select-none blur-sm whitespace-nowrap transition-all duration-300"
+                    style={{ fontSize: 'clamp(3rem, 18vmin, 8rem)' }}
+                >
                     {agentStatus === AgentStatus.Speaking ? 'SUNIYE' : 'BOLIYE'}
                 </h1>
             </div>
         </div>
 
         {/* Text Prompt / Subtitles */}
-        <div className="mt-8 text-center h-12">
-             <p className={`text-lg font-light tracking-wide transition-opacity duration-500 ${agentStatus !== AgentStatus.Idle ? 'opacity-100' : 'opacity-0'}`}>
+        <div className="mt-8 text-center h-8 md:h-12 shrink-0">
+             <p className={`text-sm md:text-lg font-light tracking-wide transition-opacity duration-500 ${agentStatus !== AgentStatus.Idle ? 'opacity-100' : 'opacity-0'}`}>
                 {agentStatus === AgentStatus.Listening && "Listening..."}
                 {agentStatus === AgentStatus.Thinking && "Translating context..."}
                 {agentStatus === AgentStatus.Speaking && "Responding..."}
                 {agentStatus === AgentStatus.Error && <span className="text-red-400">Connection Error</span>}
             </p>
              {agentStatus === AgentStatus.Idle && (
-                 <p className="text-gray-500 font-light animate-pulse">Ready to converse in Urdu & English</p>
+                 <p className="text-xs md:text-base text-gray-500 font-light animate-pulse">Ready to converse in Urdu & English</p>
              )}
         </div>
 
       </main>
 
       {/* Footer Controls */}
-      <footer className="relative z-10 w-full flex justify-center pb-8">
+      <footer className="relative z-10 w-full flex justify-center pb-4 md:pb-8 shrink-0">
         <button
             onClick={handleToggleSession}
-            className={`group relative flex items-center justify-center px-8 py-4 rounded-full glass-panel transition-all duration-500 hover:bg-white/5 active:scale-95 ${isSessionActive ? 'border-red-500/30' : 'border-white/10'}`}
+            className={`group relative flex items-center justify-center px-6 py-3 md:px-8 md:py-4 rounded-full border bg-white/5 backdrop-blur-md transition-all duration-500 hover:bg-white/10 active:scale-95 ${isSessionActive ? 'border-red-500/30' : 'border-white/10'}`}
         >
             <span className={`absolute inset-0 rounded-full blur-md bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500`} />
             
             <div className="flex items-center gap-3 relative z-10">
                 {isSessionActive ? (
                     <>
-                        <span className="w-2 h-2 bg-red-500 rounded-sm animate-spin" />
-                        <span className="font-mono text-sm uppercase tracking-widest text-red-200">Terminate</span>
+                        <span className="w-1.5 h-1.5 md:w-2 md:h-2 bg-red-500 rounded-sm animate-spin" />
+                        <span className="font-mono text-xs md:text-sm uppercase tracking-widest text-red-200">Terminate</span>
                     </>
                 ) : (
                     <>
-                        <span className="w-2 h-2 bg-white rounded-full group-hover:bg-violet-400 transition-colors" />
-                        <span className="font-mono text-sm uppercase tracking-widest">Initialize</span>
+                        <span className="w-1.5 h-1.5 md:w-2 md:h-2 bg-white rounded-full group-hover:bg-violet-400 transition-colors" />
+                        <span className="font-mono text-xs md:text-sm uppercase tracking-widest">Initialize</span>
                     </>
                 )}
             </div>
@@ -356,4 +355,4 @@ export default function App() {
 
     </div>
   );
-}
+                }
