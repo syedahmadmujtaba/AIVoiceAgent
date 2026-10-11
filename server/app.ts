@@ -1,14 +1,14 @@
-import { createServer, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { GoogleGenAI } from '@google/genai';
-import { liveConfig, type TokenResponse } from '../shared/live';
+import { liveConfig, type TokenResponse } from '../shared/live.js';
 
 interface Options {
   apiKey?: string;
   model: string;
   voice: string;
-  origin: string;
+  origins: string[];
   dist?: string;
   issueToken?: () => Promise<TokenResponse>;
 }
@@ -21,7 +21,8 @@ const types: Record<string, string> = {
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
 };
 
-export function createApp(options: Options) {
+export function createHandler(options: Options) {
+  const allowedOrigins = new Set(options.origins);
   const buckets = new Map<string, { count: number; until: number }>();
   let globalBucket = { count: 0, until: 0 };
   const config = liveConfig(options.voice);
@@ -37,7 +38,7 @@ export function createApp(options: Options) {
     if (!token.name) throw new Error('Token service returned no token.');
     return { token: token.name, model: options.model, expiresAt, config };
   });
-  return createServer(async (request, response) => {
+  return async (request: IncomingMessage, response: ServerResponse) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
     response.setHeader('Permissions-Policy', 'microphone=(self), camera=()');
@@ -48,7 +49,7 @@ export function createApp(options: Options) {
           response.setHeader('Allow', 'POST');
           return json(response, 405, { error: 'Use POST to start a session.' });
         }
-        if (request.headers.origin !== options.origin || request.headers['sec-fetch-site'] === 'cross-site') {
+        if (!request.headers.origin || !allowedOrigins.has(request.headers.origin) || request.headers['sec-fetch-site'] === 'cross-site') {
           return json(response, 403, { error: 'This origin is not allowed to start a session.' });
         }
         if (!options.apiKey && !options.issueToken) {
@@ -83,5 +84,9 @@ export function createApp(options: Options) {
         response.end(request.method === 'HEAD' ? undefined : data);
       } catch { json(response, 404, { error: 'Not found.' }); }
     } catch { json(response, 400, { error: 'Invalid request.' }); }
-  });
+  };
+}
+
+export function createApp(options: Options) {
+  return createServer(createHandler(options));
 }

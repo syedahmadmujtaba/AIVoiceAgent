@@ -14,7 +14,7 @@ afterEach(async () => {
 });
 async function setup(configured = true) {
   const issueToken = vi.fn(async () => ({ token: 'short-lived', model: 'test-model', expiresAt: 'later', config: liveConfig('Kore') }));
-  const server = createApp({ model: 'test-model', voice: 'Kore', origin: 'http://localhost:3000',
+  const server = createApp({ model: 'test-model', voice: 'Kore', origins: ['http://localhost:3000', 'https://bilingualvoiceagent.vercel.app', 'https://voiceagent.ahmadmujtaba.dev'],
     ...(configured ? { issueToken } : {}),
   });
   servers.push(server);
@@ -24,6 +24,12 @@ async function setup(configured = true) {
   return { url, post, issueToken };
 }
 describe('token endpoint', () => {
+  it('accepts both deployed origins and rejects lookalike domains', async () => {
+    const f = await setup();
+    expect((await f.post('https://bilingualvoiceagent.vercel.app')).status).toBe(200);
+    expect((await f.post('https://voiceagent.ahmadmujtaba.dev')).status).toBe(200);
+    expect((await f.post('https://voiceagent.ahmadmujtaba.dev.evil.example')).status).toBe(403);
+  });
   it('rejects other origins and methods before issuing a token', async () => {
     const f = await setup();
     expect((await fetch(f.url)).status).toBe(405);
