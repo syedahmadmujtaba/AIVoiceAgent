@@ -1,0 +1,9 @@
+@import "tailwindcss";
+@source "./App.tsx";
+@source "./components";
+body { margin: 0; font-family: 'Inter', sans-serif; background: #030305; }
+.font-display { font-family: 'Syne', sans-serif; }
+button:focus-visible { outline: 2px solid #a78bfa; outline-offset: 5px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
